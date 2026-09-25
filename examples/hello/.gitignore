@@ -1,0 +1,9 @@
+/.hvigor
+/build
+/oh_modules
+/local.properties
+/entry/build
+/entry/oh_modules
+/entry/libs
+/rust/target
+/entry/.cxx
