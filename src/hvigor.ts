@@ -40,5 +40,9 @@ export interface OhosTarget {
 }
 
 export interface OhosAppContext {
-  getSdkDetails?(): { getSdkDir(): string; getSdkVersion(): number };
+  getSdkDetails?(): { isOhos?(): boolean; getSdkDir(): string; getSdkVersion(): number };
+  getCurrentProduct?(): { getProductName(): string };
+  getBuildProfileOpt?(): {
+    app?: { products?: { name: string; compileSdkVersion?: number | string }[] };
+  };
 }

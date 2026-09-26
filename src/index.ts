@@ -136,15 +136,31 @@ function hvigorSdk(node: HvigorNode): string | undefined {
   for (let parent = node.getParentNode(); parent !== undefined; parent = parent.getParentNode()) {
     root = parent;
   }
-  const sdk = (root.getContext(OHOS_APP_PLUGIN) as OhosAppContext | undefined)?.getSdkDetails?.();
+  const context = root.getContext(OHOS_APP_PLUGIN) as OhosAppContext | undefined;
+  const sdk = context?.getSdkDetails?.();
   if (sdk === undefined) {
     return undefined;
   }
   const dir = sdk.getSdkDir();
-  return [
-    path.join(dir, String(sdk.getSdkVersion()), 'native'),
-    path.join(dir, 'default', 'openharmony', 'native'),
-    path.join(dir, 'openharmony', 'native'),
-    path.join(dir, 'native'),
-  ].find((native) => fs.existsSync(path.join(native, 'sysroot')));
+  // From API 26 on, the SDK directory is named after the dotted `compileSdkVersion`, e.g. `26.0.0`,
+  // while `getSdkVersion()` is the plain API level.
+  const candidates = [compileSdkVersion(context), String(sdk.getSdkVersion())].flatMap((version) =>
+    version === undefined ? [] : [path.join(dir, version, 'native')],
+  );
+  if (sdk.isOhos?.() !== true) {
+    candidates.push(
+      path.join(dir, 'default', 'openharmony', 'native'),
+      path.join(dir, 'openharmony', 'native'),
+      path.join(dir, 'native'),
+    );
+  }
+  return candidates.find((native) => fs.existsSync(path.join(native, 'sysroot')));
+}
+
+function compileSdkVersion(context: OhosAppContext | undefined): string | undefined {
+  const product = context?.getCurrentProduct?.().getProductName();
+  const version = context
+    ?.getBuildProfileOpt?.()
+    .app?.products?.find((candidate) => candidate.name === product)?.compileSdkVersion;
+  return version === undefined ? undefined : String(version);
 }
