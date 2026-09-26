@@ -73,9 +73,10 @@ and fails because there is no `CMakeLists.txt`.
 
 Bump the version with `npm version --no-git-tag-version <version>` and merge the change into
 `main`. The `Release` workflow then packs the package and, in the `release` environment, tags the
-commit as `<version>`, publishes the package to npm with trusted publishing and publishes the GitHub
-release with the package attached. If a release did not complete, run the `Release` workflow
-manually for its tag to finish it.
+commit as `<version>`, stages the package on npm with trusted publishing and publishes the GitHub
+release with the package attached. Publish the staged package with `npm stage approve <stage-id>`
+(`npm stage list` shows the id) or on npmjs.com, which asks for 2FA. If a release did not complete,
+run the `Release` workflow manually for its tag to finish it.
 
 ## License
 
