@@ -142,7 +142,7 @@ jobs:
           if curl -sSf -o /dev/null "https://registry.npmjs.org/${PACKAGE}/${TAG}"; then
             echo "${TAG} is already on npm"
           else
-            npm publish --access public package/*.tgz
+            npm publish --access public ./package/*.tgz
           fi
       # The provenance names this run's commit as the source, which a manual run from another
       # ref than the tag did not build.
