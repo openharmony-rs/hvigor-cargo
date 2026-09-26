@@ -69,6 +69,14 @@ for OpenHarmony products, the `openharmony` part of the HarmonyOS SDK otherwise.
 Keep ArkTS type declarations for the library outside `src/main/cpp`, or hvigor runs its CMake build
 and fails because there is no `CMakeLists.txt`.
 
+## Releasing
+
+Bump the version with `npm version --no-git-tag-version <version>` and merge the change into
+`main`. The `Release` workflow then packs the package and, in the `release` environment, tags the
+commit as `<version>`, publishes the package to npm with trusted publishing and publishes the GitHub
+release with the package attached. If a release did not complete, run the `Release` workflow
+manually for its tag to finish it.
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT)

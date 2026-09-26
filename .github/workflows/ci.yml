@@ -1,0 +1,24 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # The Node.js that the command line tools run hvigor with.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      # Also compiles `dist` through the `prepare` script.
+      - run: npm ci
+      - run: npm pack --dry-run

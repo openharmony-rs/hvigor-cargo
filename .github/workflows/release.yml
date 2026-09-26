@@ -1,0 +1,163 @@
+name: Release
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to finish or backfill the release for, e.g. 0.1.1
+        required: true
+
+env:
+  PACKAGE: "@openharmony-rs/hvigor-cargo"
+
+jobs:
+  # Decides with a read-only token whether anything needs to be released, so that
+  # the privileged `release` job only runs (and asks for approval) when it does.
+  check:
+    name: Check release state
+    if: github.repository_owner == 'openharmony-rs'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      sha: ${{ steps.check.outputs.sha }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}
+          persist-credentials: false
+      - name: Check npm, tag and GitHub release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          version=$(jq -r .version package.json)
+          tag="${version}"
+          sha=$(git rev-parse HEAD)
+          if [[ -n "$INPUT_TAG" && "$INPUT_TAG" != "$tag" ]]; then
+            echo "::error::package.json at ${INPUT_TAG} has version ${version}"
+            exit 1
+          fi
+          status=$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${PACKAGE}/${version}")
+          case "$status" in
+            200) publish=false ;;
+            404) publish=true ;;
+            *) echo "::error::Unexpected npm registry response: HTTP ${status}"; exit 1 ;;
+          esac
+          if [[ -z "$INPUT_TAG" && "$publish" == false ]]; then
+            echo "${version} is already on npm, nothing to release"
+            exit 0
+          fi
+          tag_sha=$(git ls-remote origin "refs/tags/${tag}" "refs/tags/${tag}^{}" | tail -n1 | cut -f1)
+          if [[ -n "$tag_sha" && "$tag_sha" != "$sha" ]]; then
+            echo "::error::Tag ${tag} points to ${tag_sha}, not ${sha}"
+            exit 1
+          fi
+          if [[ "$publish" == false && "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
+            echo "Release ${tag} is already published, nothing to release"
+            exit 0
+          fi
+          {
+            echo "tag=${tag}"
+            echo "sha=${sha}"
+            echo "publish=${publish}"
+          } >> "$GITHUB_OUTPUT"
+
+  # The privileged job publishes this tarball, so that it runs none of the package's scripts.
+  package:
+    name: Pack
+    needs: check
+    if: needs.check.outputs.tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: mkdir package && npm pack --pack-destination package
+      - uses: actions/upload-artifact@v7
+        with:
+          name: package
+          path: package/*.tgz
+          if-no-files-found: error
+
+  # The only job with write access. It builds nothing and only runs in the `release`
+  # environment. The GitHub release is published last, as immutable releases can't be
+  # changed afterwards.
+  release:
+    name: Release ${{ needs.check.outputs.tag }}
+    needs: [check, package]
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      # npm trusted publishing with provenance, and signing the build provenance
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.check.outputs.tag }}
+      SHA: ${{ needs.check.outputs.sha }}
+      PUBLISH: ${{ needs.check.outputs.publish }}
+    steps:
+      - name: Create tag
+        run: |
+          if tag_sha=$(gh api "repos/${GH_REPO}/commits/tags/${TAG}" --jq .sha 2>/dev/null); then
+            if [[ "$tag_sha" != "$SHA" ]]; then
+              echo "::error::Tag ${TAG} points to ${tag_sha}, not ${SHA}"
+              exit 1
+            fi
+          else
+            gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${SHA}" --silent
+          fi
+      - uses: actions/download-artifact@v8
+        with:
+          name: package
+          path: package
+      - if: env.PUBLISH == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - if: env.PUBLISH == 'true'
+        run: npm install --global npm@^11.5.1
+      - name: Publish to npm
+        if: env.PUBLISH == 'true'
+        run: |
+          if curl -sSf -o /dev/null "https://registry.npmjs.org/${PACKAGE}/${TAG}"; then
+            echo "${TAG} is already on npm"
+          else
+            npm publish --access public package/*.tgz
+          fi
+      # The provenance names this run's commit as the source, which a manual run from another
+      # ref than the tag did not build.
+      - if: github.sha == env.SHA
+        uses: actions/attest@v4
+        with:
+          subject-path: package/*
+      - name: Publish GitHub release
+        run: |
+          if ! draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            gh release create "$TAG" --draft --verify-tag --generate-notes package/*
+          elif [[ "$draft" == true ]]; then
+            gh release upload "$TAG" --clobber package/*
+          else
+            echo "::notice::Release ${TAG} is already published"
+            exit 0
+          fi
+          gh release edit "$TAG" --draft=false
